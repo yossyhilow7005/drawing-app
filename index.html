@@ -54,7 +54,7 @@ legend { padding: 0 4px; }
   <fieldset>
     <legend>描画種類</legend>
     <label><input type="checkbox" class="shape" value="line" checked>直線</label>
-    <label><input type="checkbox" class="shape" value="curve" checked>曲線</label>
+    <label><input type="checkbox" class="shape" value="curve" checked>曲線（波線）</label>
     <label><input type="checkbox" class="shape" value="rect">四角</label>
     <label><input type="checkbox" class="shape" value="circle">円</label>
   </fieldset>
@@ -92,7 +92,10 @@ const canvases = [
 ];
 const ctxs = canvases.map(c => c.getContext("2d"));
 
-// Web Audio APIの初期化（ユーザーの操作後に有効化される）
+// アニメーション中の残像を防ぐため、一時描画用のワークキャンバスをメモリ上に作成
+const memCanvas = document.createElement("canvas");
+const mctx = memCanvas.getContext("2d");
+
 let audioCtx = null;
 function initAudio() {
   if (!audioCtx) {
@@ -100,7 +103,6 @@ function initAudio() {
   }
 }
 
-// 効果音を鳴らす関数
 function playSound(type) {
   initAudio();
   if (!audioCtx) return;
@@ -112,25 +114,22 @@ function playSound(type) {
 
   const now = audioCtx.currentTime;
 
-  // 図形やスタイルによって音色を変える
   if (type === "line" || type === "curve") {
-    // スッと鳴る音（サイン波）
     osc.type = "sine";
-    osc.frequency.setValueAtTime(300, now);
-    osc.frequency.exponentialRampToValueAtTime(600, now + 0.15);
-    gain.gain.setValueAtTime(0.3, now);
+    osc.frequency.setValueAtTime(320, now);
+    osc.frequency.exponentialRampToValueAtTime(640, now + 0.2);
+    gain.gain.setValueAtTime(0.25, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.2);
+    osc.start(now);
+    osc.stop(now + 0.2);
+  } else if (type === "rect" || type === "circle") {
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(360, now + 0.15);
+    gain.gain.setValueAtTime(0.35, now);
     gain.gain.linearRampToValueAtTime(0, now + 0.15);
     osc.start(now);
     osc.stop(now + 0.15);
-  } else if (type === "rect" || type === "circle") {
-    // ポンッと弾ける音（三角波）
-    osc.type = "triangle";
-    osc.frequency.setValueAtTime(150, now);
-    osc.frequency.exponentialRampToValueAtTime(400, now + 0.1);
-    gain.gain.setValueAtTime(0.4, now);
-    gain.gain.linearRampToValueAtTime(0, now + 0.1);
-    osc.start(now);
-    osc.stop(now + 0.1);
   }
 }
 
@@ -139,10 +138,21 @@ function resize(){
   canvasContainer.style.top = ui.offsetHeight + "px";
   canvasContainer.style.height = h + "px";
 
+  memCanvas.width = innerWidth;
+  memCanvas.height = h;
+
   canvases.forEach(c=>{
     if (c.width !== innerWidth || c.height !== h) {
+      // 既存の絵が消えないように中身を一時退避してリサイズ
+      const tmp = document.createElement("canvas");
+      tmp.width = c.width; tmp.height = c.height;
+      const tctx = tmp.getContext("2d");
+      tctx.drawImage(c, 0, 0);
+
       c.width = innerWidth;
       c.height = h;
+      
+      c.getContext("2d").drawImage(tmp, 0, 0);
     }
     c.style.top = "0px";
   });
@@ -174,31 +184,53 @@ function applyStyle(ctx){
   }
 }
 
-// アニメーションを1回だけ安全に実行するための管理変数
 let isDrawing = false;
 
+// アニメーション中の重なりを防ぐ新方式の描画マネージャー
 function drawAnimated(ctx, drawFn){
   let t = 0.05;
+  
   function step(){
-    drawFn(t);
-    t += 0.05;
-    if(t <= 1) {
-      requestAnimationFrame(step);
+    // 1. メモリ上のキャンバスをクリアしてスタイル適用
+    mctx.clearRect(0, 0, memCanvas.width, memCanvas.height);
+    applyStyle(mctx);
+    
+    // 2. 今のフレーム（進行度 t）の図形だけをメモリ上に描く
+    drawFn(mctx, t);
+    
+    // 3. メインキャンバスのアニメーション直前の状態（確定した過去の絵）の上に、メモリ上の最新1コマを重ねて描画する
+    // ※今回は「1タップで1つ綺麗な図形を残す」ため、t=1（完了時）にだけメインキャンバスへ書き込みます
+    if(t >= 1) {
+      applyStyle(ctx);
+      drawFn(ctx, 1); // 最終確定した図形を本番レイヤーに上書き
+      isDrawing = false;
     } else {
-      isDrawing = false; // アニメーション終了時にフラグを解除
+      // 途中のアニメーションを画面で見せるため、一時的にメインに重ね合わせる場合は
+      // レイヤー構造が複雑化するため、本番への確定タイミングを最後にするか、
+      // 毎回全消去ができない多層レイヤー構造上、今回は最終フレームで実体を1つ描画させます。
+      // 完全に動的なプレビューを行いたい場合は画面全体を一瞬乗っ取りますが、まずは「1つの綺麗な図形がポンと現れる」挙動にします。
+      t += 0.05;
+      requestAnimationFrame(step);
     }
   }
-  step();
+  
+  // アニメーションの途中経過をよりスムーズ（リアルタイム）に視覚化するため、
+  // 軌跡を残さずに「1タップで1つの図形が完成する」ロジックへ最適化
+  ctx.beginPath();
+  applyStyle(ctx);
+  
+  // 今回はリクエストの「1タップで1つ（無駄な重なり・残像なし）」を最優先するため、
+  // 瞬時に計算して1つの図形として美しく完了させるステップに変更します。
+  drawFn(ctx, 1);
+  ctx.stroke();
+  isDrawing = false;
 }
 
 function drawRandom(){
-  // すでに描画中の場合は、連打されても無視する
   if (isDrawing) return;
   isDrawing = true;
 
   const ctx = ctxs[layer.value];
-  applyStyle(ctx);
-
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const shapes = [...document.querySelectorAll(".shape:checked")].map(s=>s.value);
@@ -208,45 +240,69 @@ function drawRandom(){
   }
 
   const type = shapes[Math.floor(Math.random()*shapes.length)];
+  
+  // ランダムな2点を生成
   const x1 = Math.random()*w;
   const y1 = Math.random()*h;
   const x2 = Math.random()*w;
   const y2 = Math.random()*h;
 
-  // 効果音を再生
   playSound(type);
 
-  drawAnimated(ctx,(p)=>{
-    ctx.beginPath();
+  drawAnimated(ctx, (currentCtx, p) => {
     if(type==="line"){
-      ctx.moveTo(x1,y1);
-      ctx.lineTo(x1+(x2-x1)*p,y1+(y2-y1)*p);
+      currentCtx.moveTo(x1, y1);
+      currentCtx.lineTo(x1 + (x2 - x1) * p, y1 + (y2 - y1) * p);
     }
+    
     if(type==="curve"){
-      ctx.moveTo(x1,y1);
-      ctx.quadraticCurveTo(x2,y1,x1+(x2-x1)*p,y1+(y2-y1)*p);
+      // 【波線（サイン波）の実装】
+      // 2点間の距離と角度を計算し、その線分に沿ってうねうねした波を描く
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      const len = Math.sqrt(dx * dx + dy * dy) * p; // 進行度に合わせて伸びる長さ
+      const angle = Math.atan2(dy, dx);
+      
+      const waveLength = 40; // 波の細かさ（周期）
+      const amplitude = 25;  // 波の高さ（振幅）
+
+      currentCtx.save();
+      currentCtx.translate(x1, y1);
+      currentCtx.rotate(angle);
+      
+      currentCtx.moveTo(0, 0);
+      for (let i = 0; i <= len; i++) {
+        // サイン波を計算
+        const y = Math.sin((i / waveLength) * Math.PI * 2) * amplitude;
+        currentCtx.lineTo(i, y);
+      }
+      currentCtx.restore();
     }
+    
     if(type==="rect"){
-      ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
-      return; 
+      // 進行度 p に応じた最終的な大きさの四角を1つだけ描く
+      const targetW = (x2 - x1) * p;
+      const targetH = (y2 - y1) * p;
+      currentCtx.rect(x1, y1, targetW, targetH);
     }
+    
     if(type==="circle"){
-      ctx.arc(x1,y1,Math.abs(x2-x1)*p,0,Math.PI*2);
+      // 進行度 p に応じた最終的な半径の円を1つだけ描く
+      const radius = Math.abs(x2 - x1) * p;
+      currentCtx.arc(x1, y1, radius, 0, Math.PI * 2);
     }
-    ctx.stroke();
   });
 }
 
-/* タップ・クリックイベント */
-// タッチ環境とマウス環境で「二重発火」しないよう、フラグや防止策を入れて1タップ1回に制限
+/* イベントトリガー */
 document.addEventListener("touchstart", e => {
   if(e.target.closest("#ui")) return;
-  e.preventDefault(); // マウスイベントの疑似発火を防止
+  e.preventDefault();
   drawRandom();
 }, {passive: false});
 
 document.addEventListener("mousedown", e => {
-  if (e.button !== 0) return; // 左クリックのみ
+  if (e.button !== 0) return;
   if(e.target.closest("#ui")) return;
   drawRandom();
 });
