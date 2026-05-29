@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Generative Drawing Instrument</title>
+
+<style>
+body {
+  margin: 0;
+  background: #111;
+  color: #fff;
+  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#toolbar {
+  position: fixed;
+  top: env(safe-area-inset-top);
+  left: 0;
+  right: 0;
+  background: #222;
+  padding: 10px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  z-index: 10;
+}
+
+button, input, select, label {
+  font-size: 16px;
+  min-height: 44px;
+}
+
+#canvasContainer {
+  position: absolute;
+  top: calc(env(safe-area-inset-top) + 140px);
+  left: 0;
+  right: 0;
+  bottom: env(safe-area-inset-bottom);
+}
+
+canvas {
+  position: absolute;
+  top: 0;
+  left: 0;
+  touch-action: none;
+}
+</style>
+</head>
+
+<body>
+
+<div id="toolbar">
+  太さ
+  <input type="range" id="size" min="1" max="40" value="10">
+
+  色
+  <input type="color" id="colorPicker" value="#ffffff">
+
+  線の種類
+  <select id="brush">
+    <option value="pen">ペン</option>
+    <option value="watercolor">水彩</option>
+    <option value="crayon">クレヨン</option>
+    <option value="marker">蛍光ペン</option>
+  </select>
+
+  <label><input type="checkbox" class="shape" value="line" checked> 直線</label>
+  <label><input type="checkbox" class="shape" value="curve"> 曲線</label>
+  <label><input type="checkbox" class="shape" value="rect"> 四角</label>
+  <label><input type="checkbox" class="shape" value="circle"> 円</label>
+
+  レイヤー
+  <select id="layerSelect"></select>
+  <button id="addLayer">＋</button>
+  <button id="removeLayer">－</button>
+
+  <button id="clear">クリア</button>
+</div>
+
+<div id="canvasContainer"></div>
+
+<script>
+// ======================
+// 基本変数
+// ======================
+const container = document.getElementById("canvasContainer");
+const sizeInput = document.getElementById("size");
+const colorPicker = document.getElementById("colorPicker");
+const brushSelect = document.getElementById("brush");
+
+let layers = [];
+let activeLayer = 0;
+
+// ======================
+// Audio
+// ======================
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+
+function playSoundByBrush() {
+  const brush = brushSelect.value;
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+
+  const map = {
+    pen:        { type: "sine",     freq: 900, gain: 0.08 },
+    watercolor:{ type: "triangle", freq: 220, gain: 0.12 },
+    crayon:    { type: "square",   freq: 140, gain: 0.06 },
+    marker:    { type: "sawtooth", freq: 600, gain: 0.05 }
+  };
+
+  const s = map[brush];
+  osc.type = s.type;
+  osc.frequency.value = s.freq;
+  gain.gain.value = s.gain;
+
+  osc.connect(gain).connect(audioCtx.destination);
+  osc.start();
+  osc.stop(audioCtx.currentTime + 0.15);
+}
+
+// ======================
+// Resize
+// ======================
+function resize() {
+  const h = window.innerHeight -
+    document.getElementById("toolbar").offsetHeight;
+  layers.forEach(l => {
+    l.canvas.width = window.innerWidth;
+    l.canvas.height = h;
+  });
+}
+window.addEventListener("resize", resize);
+
+// ======================
+// レイヤー
+// ======================
+function createLayer(name) {
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+  container.appendChild(canvas);
+
+  canvas.addEventListener("pointerdown", () => {
+    if (layers.indexOf(layer) !== activeLayer) return;
+    audioCtx.resume();
+    playSoundByBrush();
+    drawRandomShapes(ctx);
+  });
+
+  const layer = { name, canvas, ctx };
+  layers.push(layer);
+  updateLayerUI();
+  setActiveLayer(layers.length - 1);
+  resize();
+}
+
+function updateLayerUI() {
+  const sel = document.getElementById("layerSelect");
+  sel.innerHTML = "";
+  layers.forEach((l, i) => {
+    const o = document.createElement("option");
+    o.value = i;
+    o.textContent = l.name;
+    sel.appendChild(o);
+  });
+}
+
+function setActiveLayer(i) {
+  activeLayer = i;
+  document.getElementById("layerSelect").value = i;
+}
+
+// ======================
+// ブラシ設定
+// ======================
+function setBrush(ctx) {
+  ctx.globalAlpha = 1;
+  ctx.setLineDash([]);
+  ctx.shadowBlur = 0;
+  ctx.shadowColor = "transparent";
+
+  if (brushSelect.value === "watercolor") {
+    ctx.globalAlpha = 0.25;
+    ctx.lineCap = "round";
+  }
+  if (brushSelect.value === "crayon") {
+    ctx.globalAlpha = 0.9;
+    ctx.setLineDash([Math.random() * 5, Math.random() * 8]);
+    ctx.lineCap = "butt";
+  }
+  if (brushSelect.value === "marker") {
+    ctx.globalAlpha = 0.15;
+    ctx.lineCap = "round";
+    ctx.shadowBlur = 10;
+    ctx.shadowColor = ctx.strokeStyle;
+  }
+}
+
+// ======================
+// アニメーション共通
+// ======================
+function animateDraw(step, duration = 500) {
+  const start = performance.now();
+  function frame(now) {
+    const t = Math.min((now - start) / duration, 1);
+    step(t);
+    if (t < 1) requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+}
+
+// ======================
+// にじみ（水彩）
+// ======================
+function watercolorBleed(ctx, drawFn) {
+  setTimeout(() => {
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.lineWidth *= 2.5;
+    drawFn();
+    ctx.restore();
+  }, 200);
+}
+
+// ======================
+// 描画関数
+// ======================
+function drawAnimatedLine(ctx, x1, y1, x2, y2) {
+  setBrush(ctx);
+  const base = Number(sizeInput.value);
+  animateDraw(t => {
+    ctx.lineWidth = base * (0.5 + Math.sin(t * Math.PI));
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t);
+    ctx.stroke();
+  });
+}
+
+function drawAnimatedCurve(ctx, p0, p1, p2) {
+  setBrush(ctx);
+  const base = Number(sizeInput.value);
+  animateDraw(t => {
+    ctx.lineWidth = base * (0.5 + t);
+    ctx.beginPath();
+    ctx.moveTo(p0.x, p0.y);
+    ctx.quadraticCurveTo(p1.x, p1.y,
+      p0.x + (p2.x - p0.x) * t,
+      p0.y + (p2.y - p0.y) * t);
+    ctx.stroke();
+  });
+}
+
+function drawAnimatedCircle(ctx, x, y, r) {
+  setBrush(ctx);
+  const base = Number(sizeInput.value);
+  animateDraw(t => {
+    ctx.lineWidth = base * (0.7 + t);
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2 * t);
+    ctx.stroke();
+  });
+  if (brushSelect.value === "watercolor") {
+    watercolorBleed(ctx, () => {
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    });
+  }
+}
+
+function drawAnimatedRect(ctx, x, y, w, h) {
+  setBrush(ctx);
+  const base = Number(sizeInput.value);
+  animateDraw(t => {
+    ctx.lineWidth = base * (0.6 + t);
+    const p = t * 4;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    if (p <= 1) ctx.lineTo(x + w * p, y);
+    else if (p <= 2) { ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h * (p - 1)); }
+    else if (p <= 3) { ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - w * (p - 2), y + h); }
+    else { ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + h); ctx.lineTo(x, y + h * (4 - p)); }
+    ctx.stroke();
+  });
+}
+
+// ======================
+// ランダム生成
+// ======================
+function drawRandomShapes(ctx) {
+  const selected = [...document.querySelectorAll(".shape:checked")].map(s => s.value);
+  if (!selected.length) return;
+
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+  const x = Math.random() * w;
+  const y = Math.random() * h;
+
+  ctx.strokeStyle = colorPicker.value;
+
+  selected.forEach(type => {
+    if (type === "line")
+      drawAnimatedLine(ctx, x, y, x + Math.random()*200-100, y + Math.random()*200-100);
+    if (type === "curve")
+      drawAnimatedCurve(ctx, {x,y}, {x:Math.random()*w,y:Math.random()*h}, {x:Math.random()*w,y:Math.random()*h});
+    if (type === "circle")
+      drawAnimatedCircle(ctx, x, y, Math.random()*80);
+    if (type === "rect")
+      drawAnimatedRect(ctx, x, y, Math.random()*150, Math.random()*150);
+  });
+}
+
+// ======================
+// UI
+// ======================
+document.getElementById("layerSelect").onchange = e => activeLayer = +e.target.value;
+document.getElementById("addLayer").onclick = () => createLayer("Layer " + (layers.length + 1));
+document.getElementById("removeLayer").onclick = () => {
+  if (layers.length <= 1) return;
+  const l = layers.splice(activeLayer, 1)[0];
+  container.removeChild(l.canvas);
+  setActiveLayer(Math.max(0, activeLayer - 1));
+  updateLayerUI();
+};
+document.getElementById("clear").onclick = () => {
+  const ctx = layers[activeLayer].ctx;
+  ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+};
+
+// ======================
+// Init
+// ======================
+createLayer("Layer 1");
+</script>
+
+</body>
+</html>
