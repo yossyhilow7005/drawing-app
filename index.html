@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>iPad Generative Drawing</title>
+<title>iPad Tap Drawing</title>
 
 <style>
 body {
@@ -19,14 +19,15 @@ body {
   flex-wrap:wrap;
   gap:6px;
   font-size:14px;
+  position:relative;
+  z-index:10;
 }
 canvas {
   position:absolute;
   left:0;
-  touch-action:manipulation;
+  top:0;
 }
 fieldset { border:1px solid #555; }
-button { font-size:14px; }
 </style>
 </head>
 
@@ -36,9 +37,6 @@ button { font-size:14px; }
   色 <input type="color" id="color" value="#ffffff">
   太さ <input type="range" id="size" min="1" max="20" value="5">
   透明度 <input type="range" id="alpha" min="0.05" max="1" step="0.05" value="0.7">
-
-  背景色 <input type="color" id="bgColor" value="#000000">
-  背景画像 <input type="file" id="bgImage" accept="image/*">
 
   レイヤー
   <select id="layer">
@@ -53,13 +51,6 @@ button { font-size:14px; }
     <label><input type="checkbox" class="shape" value="rect">四角</label>
     <label><input type="checkbox" class="shape" value="circle">円</label>
   </fieldset>
-
-  線表現
-  <select id="style">
-    <option value="water">水彩</option>
-    <option value="marker">蛍光ペン</option>
-    <option value="crayon">クレヨン</option>
-  </select>
 
   <button id="clear">クリア</button>
   <button id="export">PNG保存</button>
@@ -80,33 +71,14 @@ function resize(){
     c.style.top=ui.offsetHeight+"px";
   });
 }
-resize(); addEventListener("resize",resize);
+resize();
+addEventListener("resize",resize);
 
 function applyStyle(ctx){
   ctx.strokeStyle=color.value;
   ctx.lineWidth=size.value;
   ctx.globalAlpha=alpha.value;
   ctx.lineCap="round";
-  ctx.shadowBlur=0;
-  ctx.globalCompositeOperation="source-over";
-
-  if(style.value==="water"){
-    ctx.shadowBlur=20;
-    ctx.shadowColor=color.value;
-  }
-  if(style.value==="marker"){
-    ctx.globalCompositeOperation="lighter";
-  }
-}
-
-function drawAnimated(ctx, draw){
-  let t=0.05; // ★重要
-  function step(){
-    draw(t);
-    t+=0.05;
-    if(t<=1) requestAnimationFrame(step);
-  }
-  step();
 }
 
 function drawOnce(){
@@ -121,37 +93,40 @@ function drawOnce(){
   const x1=Math.random()*w, y1=Math.random()*h;
   const x2=Math.random()*w, y2=Math.random()*h;
 
-  drawAnimated(ctx,(p)=>{
+  let t=0.05;
+  function step(){
     ctx.beginPath();
     if(type==="line"){
       ctx.moveTo(x1,y1);
-      ctx.lineTo(x1+(x2-x1)*p,y1+(y2-y1)*p);
+      ctx.lineTo(x1+(x2-x1)*t,y1+(y2-y1)*t);
     }
     if(type==="curve"){
       ctx.moveTo(x1,y1);
-      ctx.quadraticCurveTo(x2,y1,x1+(x2-x1)*p,y1+(y2-y1)*p);
+      ctx.quadraticCurveTo(x2,y1,x1+(x2-x1)*t,y1+(y2-y1)*t);
     }
     if(type==="rect"){
-      ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
+      ctx.strokeRect(x1,y1,(x2-x1)*t,(y2-y1)*t);
     }
     if(type==="circle"){
-      ctx.arc(x1,y1,Math.abs(x2-x1)*p,0,Math.PI*2);
+      ctx.arc(x1,y1,Math.abs(x2-x1)*t,0,Math.PI*2);
     }
     ctx.stroke();
-  });
+    t+=0.05;
+    if(t<=1) requestAnimationFrame(step);
+  }
+  step();
 }
 
-canvases.forEach(c=>{
-  c.addEventListener("pointerdown",drawOnce);
+/* ★ Safari最重要ポイント */
+document.addEventListener("touchstart",e=>{
+  if(e.target.closest("#ui")) return;
+  drawOnce();
+},{passive:true});
+
+document.addEventListener("mousedown",e=>{
+  if(e.target.closest("#ui")) return;
+  drawOnce();
 });
-
-bgColor.oninput=()=>canvases.forEach(c=>c.style.background=bgColor.value);
-
-bgImage.onchange=e=>{
-  const img=new Image();
-  img.onload=()=>ctxs.forEach(ctx=>ctx.drawImage(img,0,0,ctx.canvas.width,ctx.canvas.height));
-  img.src=URL.createObjectURL(e.target.files[0]);
-};
 
 clear.onclick=()=>ctxs[layer.value].clearRect(0,0,innerWidth,innerHeight);
 
