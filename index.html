@@ -2,208 +2,196 @@
 <html lang="ja">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="apple-mobile-web-app-capable" content="yes">
-<title>Generative Drawing App</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Generative Tap Drawing</title>
 
 <style>
 body {
-  margin: 0;
-  background: #000;
-  color: #fff;
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  margin:0;
+  font-family: system-ui, sans-serif;
+  background:#222;
+  color:#fff;
+  user-select:none;
 }
-
-#toolbar {
-  position: fixed;
-  top: env(safe-area-inset-top);
-  left: 0;
-  right: 0;
-  background: rgba(20,20,20,0.95);
-  padding: 8px;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  z-index: 10;
+#ui {
+  padding:8px;
+  background:#333;
+  display:flex;
+  flex-wrap:wrap;
+  gap:6px;
+  font-size:14px;
 }
-
-label { font-size: 14px; }
-
-button, input {
-  min-height: 36px;
-}
-
-#canvasContainer {
-  position: absolute;
-  top: calc(env(safe-area-inset-top) + 120px);
-  left: 0;
-  right: 0;
-  bottom: env(safe-area-inset-bottom);
-}
-
 canvas {
-  position: absolute;
-  top: 0;
-  left: 0;
-  touch-action: none;
+  touch-action: manipulation;
+  display:block;
 }
+label { margin-right:6px; }
 </style>
 </head>
 
 <body>
 
-<div id="toolbar">
-  太さ <input type="range" id="size" min="1" max="40" value="10">
-  透明度 <input type="range" id="alpha" min="0.05" max="1" step="0.05" value="0.8">
-  色 <input type="color" id="color" value="#ffffff">
+<div id="ui">
+  <label>色 <input type="color" id="color" value="#ffffff"></label>
+  <label>太さ <input type="range" id="size" min="1" max="20" value="4"></label>
+  <label>透明度 <input type="range" id="alpha" min="0.05" max="1" step="0.05" value="0.8"></label>
 
-  背景色 <input type="color" id="bgColor" value="#000000">
-  背景画像 <input type="file" id="bgImage" accept="image/*">
+  <label>背景色 <input type="color" id="bgColor" value="#000000"></label>
+  <label>背景画像 <input type="file" id="bgImage" accept="image/*"></label>
 
-  <label><input type="checkbox" class="shape" value="line" checked>直線</label>
-  <label><input type="checkbox" class="shape" value="curve" checked>曲線</label>
-  <label><input type="checkbox" class="shape" value="rect">四角</label>
-  <label><input type="checkbox" class="shape" value="circle">円</label>
+  <label>レイヤー
+    <select id="layer">
+      <option value="0">Layer 1</option>
+      <option value="1">Layer 2</option>
+    </select>
+  </label>
 
-  <label><input type="radio" name="style" value="normal" checked>通常</label>
-  <label><input type="radio" name="style" value="water">水彩</label>
-  <label><input type="radio" name="style" value="neon">蛍光</label>
-  <label><input type="radio" name="style" value="crayon">クレヨン</label>
+  <fieldset>
+    <legend>描画種類</legend>
+    <label><input type="checkbox" class="shape" value="line" checked>直線</label>
+    <label><input type="checkbox" class="shape" value="curve" checked>曲線</label>
+    <label><input type="checkbox" class="shape" value="rect">四角</label>
+    <label><input type="checkbox" class="shape" value="circle">円</label>
+  </fieldset>
 
-  <button id="clear">クリア</button>
+  <label>線表現
+    <select id="style">
+      <option value="water">水彩</option>
+      <option value="marker">蛍光ペン</option>
+      <option value="crayon">クレヨン</option>
+    </select>
+  </label>
 </div>
 
-<div id="canvasContainer"></div>
+<canvas id="canvas0"></canvas>
+<canvas id="canvas1"></canvas>
 
 <script>
-const container = document.getElementById("canvasContainer");
+const canvases = [
+  document.getElementById("canvas0"),
+  document.getElementById("canvas1")
+];
+const ctxs = canvases.map(c => c.getContext("2d"));
 
-// ===== 背景 =====
-const bgCanvas = document.createElement("canvas");
-const bgCtx = bgCanvas.getContext("2d");
-container.appendChild(bgCanvas);
-
-// ===== 描画 =====
-const drawCanvas = document.createElement("canvas");
-const ctx = drawCanvas.getContext("2d");
-container.appendChild(drawCanvas);
-
-let drawing = false;
-let bgImg = null;
-
-function resize() {
-  const w = window.innerWidth;
-  const h = container.clientHeight;
-  [bgCanvas, drawCanvas].forEach(c => {
-    c.width = w;
-    c.height = h;
+function resize(){
+  canvases.forEach(c=>{
+    c.width = innerWidth;
+    c.height = innerHeight - document.getElementById("ui").offsetHeight;
+    c.style.position="absolute";
+    c.style.top=document.getElementById("ui").offsetHeight+"px";
   });
-  redrawBg();
 }
-window.addEventListener("resize", resize);
+resize();
+addEventListener("resize", resize);
 
-function redrawBg() {
-  bgCtx.fillStyle = bgColor.value;
-  bgCtx.fillRect(0,0,bgCanvas.width,bgCanvas.height);
-  if (bgImg) bgCtx.drawImage(bgImg,0,0,bgCanvas.width,bgCanvas.height);
-}
-
-bgColor.oninput = redrawBg;
-bgImage.onchange = e => {
-  const img = new Image();
-  img.onload = () => { bgImg = img; redrawBg(); };
-  img.src = URL.createObjectURL(e.target.files[0]);
+const ui = {
+  color: color,
+  size: size,
+  alpha: alpha,
+  layer: layer,
+  style: style
 };
 
-// ===== サウンド =====
-let audioCtx;
-function playSound(){
-  audioCtx ??= new (window.AudioContext||webkitAudioContext)();
-  const o = audioCtx.createOscillator();
-  const g = audioCtx.createGain();
-  o.frequency.value = 200 + Math.random()*600;
-  g.gain.value = 0.04;
-  o.connect(g).connect(audioCtx.destination);
-  o.start();
-  o.stop(audioCtx.currentTime + 0.1);
-}
-
-// ===== 描画ロジック =====
-function drawRandom() {
-  const w = drawCanvas.width;
-  const h = drawCanvas.height;
-
-  ctx.globalAlpha = alpha.value;
-  ctx.strokeStyle = color.value;
-  ctx.fillStyle = color.value;
-  ctx.lineWidth = size.value;
+function applyStyle(ctx){
+  ctx.strokeStyle = ui.color.value;
+  ctx.fillStyle = ui.color.value;
+  ctx.lineWidth = ui.size.value;
+  ctx.globalAlpha = ui.alpha.value;
   ctx.lineCap = "round";
 
+  if(ui.style.value==="water"){
+    ctx.shadowBlur = 20;
+    ctx.shadowColor = ui.color.value;
+  } else if(ui.style.value==="marker"){
+    ctx.globalCompositeOperation="lighter";
+  } else {
+    ctx.shadowBlur = 0;
+    ctx.globalCompositeOperation="source-over";
+  }
+}
+
+function drawAnimated(ctx, drawFn){
+  let t=0;
+  function step(){
+    t+=0.05;
+    if(t>=1){ drawFn(1); return; }
+    drawFn(t);
+    requestAnimationFrame(step);
+  }
+  step();
+}
+
+function drawRandom(){
+  const ctx = ctxs[ui.layer.value];
+  applyStyle(ctx);
+
+  const w = ctx.canvas.width;
+  const h = ctx.canvas.height;
+
   const shapes = [...document.querySelectorAll(".shape:checked")].map(s=>s.value);
-  if (!shapes.length) return;
+  if(!shapes.length) return;
 
   const type = shapes[Math.floor(Math.random()*shapes.length)];
-  const x = Math.random()*w;
-  const y = Math.random()*h;
+  const x1 = Math.random()*w;
+  const y1 = Math.random()*h;
+  const x2 = Math.random()*w;
+  const y2 = Math.random()*h;
 
-  ctx.beginPath();
-
-  if (type === "line") {
-    ctx.moveTo(x,y);
-    ctx.lineTo(Math.random()*w, Math.random()*h);
+  drawAnimated(ctx,(p)=>{
+    ctx.beginPath();
+    if(type==="line"){
+      ctx.moveTo(x1,y1);
+      ctx.lineTo(x1+(x2-x1)*p,y1+(y2-y1)*p);
+    }
+    if(type==="curve"){
+      ctx.moveTo(x1,y1);
+      ctx.quadraticCurveTo(
+        x1+(x2-x1)*p, y1,
+        x1+(x2-x1)*p, y1+(y2-y1)*p
+      );
+    }
+    if(type==="rect"){
+      ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
+    }
+    if(type==="circle"){
+      ctx.arc(x1,y1,Math.abs(x2-x1)*p,0,Math.PI*2);
+    }
     ctx.stroke();
-  }
+  });
 
-  if (type === "curve") {
-    ctx.moveTo(x,y);
-    ctx.quadraticCurveTo(
-      Math.random()*w, Math.random()*h,
-      Math.random()*w, Math.random()*h
-    );
-    ctx.stroke();
-  }
-
-  if (type === "rect") {
-    ctx.strokeRect(x,y,50+Math.random()*150,50+Math.random()*150);
-  }
-
-  if (type === "circle") {
-    ctx.arc(x,y,20+Math.random()*80,0,Math.PI*2);
-    ctx.stroke();
-  }
-
-  ctx.globalAlpha = 1;
+  ctx.globalAlpha=1;
+  ctx.shadowBlur=0;
+  ctx.globalCompositeOperation="source-over";
 }
 
-container.addEventListener("pointerdown", ()=>{
-  drawing = true;
-  playSound();
-  animate();
+const audio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=");
+function playSound(){
+  audio.currentTime=0;
+  audio.play();
+}
+
+canvases.forEach(c=>{
+  c.addEventListener("pointerdown",()=>{
+    playSound();
+    drawRandom();
+  });
 });
 
-function animate(){
-  if (!drawing) return;
-  applyStyle();
-  drawRandom();
-  requestAnimationFrame(animate);
-}
+bgColor.addEventListener("input",()=>{
+  canvases.forEach(c=>{
+    c.style.background = bgColor.value;
+  });
+});
 
-container.addEventListener("pointerup", ()=> drawing=false);
-container.addEventListener("pointerleave", ()=> drawing=false);
-
-// ===== スタイル =====
-function applyStyle(){
-  const style = document.querySelector("input[name=style]:checked").value;
-  ctx.shadowBlur = 0;
-  if (style === "water") ctx.globalAlpha *= 0.6;
-  if (style === "neon") { ctx.shadowBlur = 20; ctx.shadowColor = color.value; }
-  if (style === "crayon") ctx.lineWidth = size.value * 1.5;
-}
-
-clear.onclick = ()=> ctx.clearRect(0,0,drawCanvas.width,drawCanvas.height);
-
-resize();
-redrawBg();
+bgImage.addEventListener("change",(e)=>{
+  const img=new Image();
+  img.onload=()=>{
+    ctxs.forEach(ctx=>{
+      ctx.drawImage(img,0,0,ctx.canvas.width,ctx.canvas.height);
+    });
+  };
+  img.src=URL.createObjectURL(e.target.files[0]);
+});
 </script>
 
 </body>
