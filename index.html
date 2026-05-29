@@ -12,7 +12,7 @@ body {
   background:#222;
   color:#fff;
   user-select:none;
-  overflow: hidden; /* スクロールを防止 */
+  overflow: hidden;
 }
 #ui {
   padding:8px;
@@ -22,11 +22,11 @@ body {
   gap:8px;
   font-size:14px;
   position: relative;
-  z-index: 10; /* UIを前面に配置 */
+  z-index: 10;
 }
 canvas {
   position:absolute;
-  touch-action: none; /* スクロールやズームなどのデフォルト動作を無効化 */
+  touch-action: none;
 }
 label { display: flex; align-items: center; gap: 4px; }
 button { font-size:14px; cursor: pointer; }
@@ -92,21 +92,59 @@ const canvases = [
 ];
 const ctxs = canvases.map(c => c.getContext("2d"));
 
+// Web Audio APIの初期化（ユーザーの操作後に有効化される）
+let audioCtx = null;
+function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+}
+
+// 効果音を鳴らす関数
+function playSound(type) {
+  initAudio();
+  if (!audioCtx) return;
+
+  const osc = audioCtx.createOscillator();
+  const gain = audioCtx.createGain();
+  osc.connect(gain);
+  gain.connect(audioCtx.destination);
+
+  const now = audioCtx.currentTime;
+
+  // 図形やスタイルによって音色を変える
+  if (type === "line" || type === "curve") {
+    // スッと鳴る音（サイン波）
+    osc.type = "sine";
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(600, now + 0.15);
+    gain.gain.setValueAtTime(0.3, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.15);
+    osc.start(now);
+    osc.stop(now + 0.15);
+  } else if (type === "rect" || type === "circle") {
+    // ポンッと弾ける音（三角波）
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(150, now);
+    osc.frequency.exponentialRampToValueAtTime(400, now + 0.1);
+    gain.gain.setValueAtTime(0.4, now);
+    gain.gain.linearRampToValueAtTime(0, now + 0.1);
+    osc.start(now);
+    osc.stop(now + 0.1);
+  }
+}
+
 function resize(){
   const h = innerHeight - ui.offsetHeight;
-  const topOffset = ui.offsetHeight;
-  
-  // コンテナの位置調整
-  canvasContainer.style.top = topOffset + "px";
+  canvasContainer.style.top = ui.offsetHeight + "px";
   canvasContainer.style.height = h + "px";
 
   canvases.forEach(c=>{
-    // リサイズ時に描画が消えるのを防ぐため、サイズが変わる時だけ再設定
     if (c.width !== innerWidth || c.height !== h) {
       c.width = innerWidth;
       c.height = h;
     }
-    c.style.top = "0px"; // コンテナ基準にするため0に
+    c.style.top = "0px";
   });
 }
 resize();
@@ -126,8 +164,6 @@ function applyStyle(ctx){
     ctx.shadowColor = color.value;
   }
   if(style.value==="marker"){
-    // 蛍光ペンらしく見せるため、ブレンドモードを「スクリーン」か「乗算（背景が白なら）」、
-    // あるいは発光させるために「screen」や「lighter」にします。
     ctx.globalCompositeOperation = "screen"; 
   }
   if(style.value==="crayon"){
@@ -138,27 +174,38 @@ function applyStyle(ctx){
   }
 }
 
+// アニメーションを1回だけ安全に実行するための管理変数
+let isDrawing = false;
+
 function drawAnimated(ctx, drawFn){
   let t = 0.05;
-  // アニメーションのたびに前のフレームを消さないと、線が重なって不透明になってしまうのを防ぐ
-  // ただし、他の図形まで消さないように、このアニメーション専用の処理を工夫する必要がありますが、
-  // 簡易的に毎回パスをクリアして引き直すように設計されています。
   function step(){
     drawFn(t);
     t += 0.05;
-    if(t <= 1) requestAnimationFrame(step);
+    if(t <= 1) {
+      requestAnimationFrame(step);
+    } else {
+      isDrawing = false; // アニメーション終了時にフラグを解除
+    }
   }
   step();
 }
 
 function drawRandom(){
+  // すでに描画中の場合は、連打されても無視する
+  if (isDrawing) return;
+  isDrawing = true;
+
   const ctx = ctxs[layer.value];
   applyStyle(ctx);
 
   const w = ctx.canvas.width;
   const h = ctx.canvas.height;
   const shapes = [...document.querySelectorAll(".shape:checked")].map(s=>s.value);
-  if(!shapes.length) return;
+  if(!shapes.length) {
+    isDrawing = false;
+    return;
+  }
 
   const type = shapes[Math.floor(Math.random()*shapes.length)];
   const x1 = Math.random()*w;
@@ -166,9 +213,10 @@ function drawRandom(){
   const x2 = Math.random()*w;
   const y2 = Math.random()*h;
 
+  // 効果音を再生
+  playSound(type);
+
   drawAnimated(ctx,(p)=>{
-    // 注意：アニメーションの過程で、古い軌跡が残ったまま新しい軌跡が上書きされるため、
-    // stroke() を呼ぶと少しずつ線が濃くなります。これが味になります。
     ctx.beginPath();
     if(type==="line"){
       ctx.moveTo(x1,y1);
@@ -180,7 +228,7 @@ function drawRandom(){
     }
     if(type==="rect"){
       ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
-      return; // strokeRectはすでに描画を完了させるので下のctx.stroke()は不要
+      return; 
     }
     if(type==="circle"){
       ctx.arc(x1,y1,Math.abs(x2-x1)*p,0,Math.PI*2);
@@ -189,20 +237,20 @@ function drawRandom(){
   });
 }
 
-/* タップ描画（PC・スマホ両対応） */
-document.addEventListener("touchstart",e=>{
+/* タップ・クリックイベント */
+// タッチ環境とマウス環境で「二重発火」しないよう、フラグや防止策を入れて1タップ1回に制限
+document.addEventListener("touchstart", e => {
   if(e.target.closest("#ui")) return;
+  e.preventDefault(); // マウスイベントの疑似発火を防止
   drawRandom();
-},{passive:true});
+}, {passive: false});
 
-document.addEventListener("mousedown",e=>{
-  // スマホでの重複発火を防ぐ
+document.addEventListener("mousedown", e => {
   if (e.button !== 0) return; // 左クリックのみ
   if(e.target.closest("#ui")) return;
   drawRandom();
 });
 
-// 背景色は個々のキャンバスではなく、背後のコンテナに適用（キャンバスの透明度を維持するため）
 bgColor.oninput=()=>{
   canvasContainer.style.background = bgColor.value;
 };
@@ -216,11 +264,9 @@ btnExport.onclick=()=>{
   out.height = h;
   const octx=out.getContext("2d");
   
-  // 1. 背景色を塗りつぶす
   octx.fillStyle = bgColor.value;
   octx.fillRect(0, 0, w, h);
   
-  // 2. レイヤーを順番に重ねる
   canvases.forEach(c=>octx.drawImage(c,0,0));
   
   const a=document.createElement("a");
