@@ -3,139 +3,124 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Generative Tap Drawing</title>
+<title>iPad Generative Drawing</title>
 
 <style>
 body {
   margin:0;
-  font-family: system-ui, sans-serif;
   background:#222;
   color:#fff;
-  user-select:none;
+  font-family:system-ui;
 }
 #ui {
-  padding:8px;
   background:#333;
+  padding:8px;
   display:flex;
   flex-wrap:wrap;
   gap:6px;
   font-size:14px;
 }
 canvas {
-  touch-action: manipulation;
-  display:block;
+  position:absolute;
+  touch-action:manipulation;
 }
-label { margin-right:6px; }
+fieldset { border:1px solid #555; }
+button { font-size:14px; }
 </style>
 </head>
 
 <body>
 
 <div id="ui">
-  <label>色 <input type="color" id="color" value="#ffffff"></label>
-  <label>太さ <input type="range" id="size" min="1" max="20" value="4"></label>
-  <label>透明度 <input type="range" id="alpha" min="0.05" max="1" step="0.05" value="0.8"></label>
+  色 <input type="color" id="color" value="#ffffff">
+  太さ <input type="range" id="size" min="1" max="20" value="5">
+  透明度 <input type="range" id="alpha" min="0.05" max="1" step="0.05" value="0.7">
 
-  <label>背景色 <input type="color" id="bgColor" value="#000000"></label>
-  <label>背景画像 <input type="file" id="bgImage" accept="image/*"></label>
+  背景色 <input type="color" id="bgColor" value="#000000">
+  背景画像 <input type="file" id="bgImage" accept="image/*">
 
-  <label>レイヤー
-    <select id="layer">
-      <option value="0">Layer 1</option>
-      <option value="1">Layer 2</option>
-    </select>
-  </label>
+  レイヤー
+  <select id="layer">
+    <option value="0">Layer 1</option>
+    <option value="1">Layer 2</option>
+  </select>
 
   <fieldset>
     <legend>描画種類</legend>
     <label><input type="checkbox" class="shape" value="line" checked>直線</label>
-    <label><input type="checkbox" class="shape" value="curve" checked>曲線</label>
+    <label><input type="checkbox" class="shape" value="curve">曲線</label>
     <label><input type="checkbox" class="shape" value="rect">四角</label>
     <label><input type="checkbox" class="shape" value="circle">円</label>
   </fieldset>
 
-  <label>線表現
-    <select id="style">
-      <option value="water">水彩</option>
-      <option value="marker">蛍光ペン</option>
-      <option value="crayon">クレヨン</option>
-    </select>
-  </label>
+  線表現
+  <select id="style">
+    <option value="water">水彩</option>
+    <option value="marker">蛍光ペン</option>
+    <option value="crayon">クレヨン</option>
+  </select>
+
+  <button id="clear">クリア</button>
+  <button id="export">PNG保存</button>
 </div>
 
-<canvas id="canvas0"></canvas>
-<canvas id="canvas1"></canvas>
+<canvas id="c0"></canvas>
+<canvas id="c1"></canvas>
 
 <script>
-const canvases = [
-  document.getElementById("canvas0"),
-  document.getElementById("canvas1")
-];
-const ctxs = canvases.map(c => c.getContext("2d"));
+const canvases=[c0,c1];
+const ctxs=canvases.map(c=>c.getContext("2d"));
 
 function resize(){
+  const h=innerHeight-ui.offsetHeight;
   canvases.forEach(c=>{
-    c.width = innerWidth;
-    c.height = innerHeight - document.getElementById("ui").offsetHeight;
-    c.style.position="absolute";
-    c.style.top=document.getElementById("ui").offsetHeight+"px";
+    c.width=innerWidth;
+    c.height=h;
+    c.style.top=ui.offsetHeight+"px";
   });
 }
-resize();
-addEventListener("resize", resize);
-
-const ui = {
-  color: color,
-  size: size,
-  alpha: alpha,
-  layer: layer,
-  style: style
-};
+resize(); addEventListener("resize",resize);
 
 function applyStyle(ctx){
-  ctx.strokeStyle = ui.color.value;
-  ctx.fillStyle = ui.color.value;
-  ctx.lineWidth = ui.size.value;
-  ctx.globalAlpha = ui.alpha.value;
-  ctx.lineCap = "round";
+  ctx.strokeStyle=color.value;
+  ctx.fillStyle=color.value;
+  ctx.lineWidth=size.value;
+  ctx.globalAlpha=alpha.value;
+  ctx.lineCap="round";
+  ctx.shadowBlur=0;
+  ctx.globalCompositeOperation="source-over";
 
-  if(ui.style.value==="water"){
-    ctx.shadowBlur = 20;
-    ctx.shadowColor = ui.color.value;
-  } else if(ui.style.value==="marker"){
+  if(style.value==="water"){
+    ctx.shadowBlur=20;
+    ctx.shadowColor=color.value;
+  }
+  if(style.value==="marker"){
     ctx.globalCompositeOperation="lighter";
-  } else {
-    ctx.shadowBlur = 0;
-    ctx.globalCompositeOperation="source-over";
   }
 }
 
-function drawAnimated(ctx, drawFn){
+function drawAnimated(ctx,fn){
   let t=0;
   function step(){
-    t+=0.05;
-    if(t>=1){ drawFn(1); return; }
-    drawFn(t);
-    requestAnimationFrame(step);
+    ctx.save();
+    applyStyle(ctx);
+    fn(t);
+    ctx.restore();
+    t+=0.04;
+    if(t<=1) requestAnimationFrame(step);
   }
   step();
 }
 
-function drawRandom(){
-  const ctx = ctxs[ui.layer.value];
-  applyStyle(ctx);
-
-  const w = ctx.canvas.width;
-  const h = ctx.canvas.height;
-
-  const shapes = [...document.querySelectorAll(".shape:checked")].map(s=>s.value);
+function drawOnce(){
+  const ctx=ctxs[layer.value];
+  const shapes=[...document.querySelectorAll(".shape:checked")].map(s=>s.value);
   if(!shapes.length) return;
 
-  const type = shapes[Math.floor(Math.random()*shapes.length)];
-  const x1 = Math.random()*w;
-  const y1 = Math.random()*h;
-  const x2 = Math.random()*w;
-  const y2 = Math.random()*h;
+  const type=shapes[Math.floor(Math.random()*shapes.length)];
+  const w=ctx.canvas.width, h=ctx.canvas.height;
+  const x1=Math.random()*w, y1=Math.random()*h;
+  const x2=Math.random()*w, y2=Math.random()*h;
 
   drawAnimated(ctx,(p)=>{
     ctx.beginPath();
@@ -145,10 +130,7 @@ function drawRandom(){
     }
     if(type==="curve"){
       ctx.moveTo(x1,y1);
-      ctx.quadraticCurveTo(
-        x1+(x2-x1)*p, y1,
-        x1+(x2-x1)*p, y1+(y2-y1)*p
-      );
+      ctx.quadraticCurveTo(x2,y1,x1+(x2-x1)*p,y1+(y2-y1)*p);
     }
     if(type==="rect"){
       ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
@@ -158,40 +140,33 @@ function drawRandom(){
     }
     ctx.stroke();
   });
-
-  ctx.globalAlpha=1;
-  ctx.shadowBlur=0;
-  ctx.globalCompositeOperation="source-over";
-}
-
-const audio = new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=");
-function playSound(){
-  audio.currentTime=0;
-  audio.play();
 }
 
 canvases.forEach(c=>{
-  c.addEventListener("pointerdown",()=>{
-    playSound();
-    drawRandom();
-  });
+  c.addEventListener("pointerdown",drawOnce);
 });
 
-bgColor.addEventListener("input",()=>{
-  canvases.forEach(c=>{
-    c.style.background = bgColor.value;
-  });
-});
+bgColor.oninput=()=>canvases.forEach(c=>c.style.background=bgColor.value);
 
-bgImage.addEventListener("change",(e)=>{
+bgImage.onchange=e=>{
   const img=new Image();
-  img.onload=()=>{
-    ctxs.forEach(ctx=>{
-      ctx.drawImage(img,0,0,ctx.canvas.width,ctx.canvas.height);
-    });
-  };
+  img.onload=()=>ctxs.forEach(ctx=>ctx.drawImage(img,0,0,ctx.canvas.width,ctx.canvas.height));
   img.src=URL.createObjectURL(e.target.files[0]);
-});
+};
+
+clear.onclick=()=>ctxs[layer.value].clearRect(0,0,innerWidth,innerHeight);
+
+export.onclick=()=>{
+  const out=document.createElement("canvas");
+  out.width=innerWidth;
+  out.height=innerHeight-ui.offsetHeight;
+  const octx=out.getContext("2d");
+  canvases.forEach(c=>octx.drawImage(c,0,0));
+  const a=document.createElement("a");
+  a.href=out.toDataURL("image/png");
+  a.download="art.png";
+  a.click();
+};
 </script>
 
 </body>
