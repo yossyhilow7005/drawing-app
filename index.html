@@ -12,21 +12,26 @@ body {
   background:#222;
   color:#fff;
   user-select:none;
+  overflow: hidden; /* スクロールを防止 */
 }
 #ui {
   padding:8px;
   background:#333;
   display:flex;
   flex-wrap:wrap;
-  gap:6px;
+  gap:8px;
   font-size:14px;
+  position: relative;
+  z-index: 10; /* UIを前面に配置 */
 }
 canvas {
   position:absolute;
-  touch-action: manipulation;
+  touch-action: none; /* スクロールやズームなどのデフォルト動作を無効化 */
 }
-label { margin-right:6px; }
-button { font-size:14px; }
+label { display: flex; align-items: center; gap: 4px; }
+button { font-size:14px; cursor: pointer; }
+fieldset { display: flex; gap: 8px; border: 1px solid #555; padding: 4px 8px; border-radius: 4px; }
+legend { padding: 0 4px; }
 </style>
 </head>
 
@@ -62,13 +67,25 @@ button { font-size:14px; }
     </select>
   </label>
 
-  <button id="export">PNG保存</button>
+  <button id="btnExport">PNG保存</button>
 </div>
 
-<canvas id="canvas0"></canvas>
-<canvas id="canvas1"></canvas>
+<div id="canvas-container" style="position:absolute; top:0; left:0; width:100%; height:100%; background:#000000;">
+  <canvas id="canvas0"></canvas>
+  <canvas id="canvas1"></canvas>
+</div>
 
 <script>
+const ui = document.getElementById("ui");
+const color = document.getElementById("color");
+const size = document.getElementById("size");
+const alpha = document.getElementById("alpha");
+const bgColor = document.getElementById("bgColor");
+const layer = document.getElementById("layer");
+const style = document.getElementById("style");
+const btnExport = document.getElementById("btnExport");
+const canvasContainer = document.getElementById("canvas-container");
+
 const canvases = [
   document.getElementById("canvas0"),
   document.getElementById("canvas1")
@@ -77,10 +94,19 @@ const ctxs = canvases.map(c => c.getContext("2d"));
 
 function resize(){
   const h = innerHeight - ui.offsetHeight;
+  const topOffset = ui.offsetHeight;
+  
+  // コンテナの位置調整
+  canvasContainer.style.top = topOffset + "px";
+  canvasContainer.style.height = h + "px";
+
   canvases.forEach(c=>{
-    c.width = innerWidth;
-    c.height = h;
-    c.style.top = ui.offsetHeight + "px";
+    // リサイズ時に描画が消えるのを防ぐため、サイズが変わる時だけ再設定
+    if (c.width !== innerWidth || c.height !== h) {
+      c.width = innerWidth;
+      c.height = h;
+    }
+    c.style.top = "0px"; // コンテナ基準にするため0に
   });
 }
 resize();
@@ -91,6 +117,7 @@ function applyStyle(ctx){
   ctx.lineWidth = size.value;
   ctx.globalAlpha = alpha.value;
   ctx.lineCap = "round";
+  ctx.lineJoin = "round";
   ctx.shadowBlur = 0;
   ctx.globalCompositeOperation = "source-over";
 
@@ -99,11 +126,13 @@ function applyStyle(ctx){
     ctx.shadowColor = color.value;
   }
   if(style.value==="marker"){
-    ctx.globalCompositeOperation = "lighter";
+    // 蛍光ペンらしく見せるため、ブレンドモードを「スクリーン」か「乗算（背景が白なら）」、
+    // あるいは発光させるために「screen」や「lighter」にします。
+    ctx.globalCompositeOperation = "screen"; 
   }
   if(style.value==="crayon"){
     ctx.lineWidth = size.value * 1.2;
-    ctx.setLineDash([1,3]);
+    ctx.setLineDash([1, 4]);
   } else {
     ctx.setLineDash([]);
   }
@@ -111,6 +140,9 @@ function applyStyle(ctx){
 
 function drawAnimated(ctx, drawFn){
   let t = 0.05;
+  // アニメーションのたびに前のフレームを消さないと、線が重なって不透明になってしまうのを防ぐ
+  // ただし、他の図形まで消さないように、このアニメーション専用の処理を工夫する必要がありますが、
+  // 簡易的に毎回パスをクリアして引き直すように設計されています。
   function step(){
     drawFn(t);
     t += 0.05;
@@ -135,6 +167,8 @@ function drawRandom(){
   const y2 = Math.random()*h;
 
   drawAnimated(ctx,(p)=>{
+    // 注意：アニメーションの過程で、古い軌跡が残ったまま新しい軌跡が上書きされるため、
+    // stroke() を呼ぶと少しずつ線が濃くなります。これが味になります。
     ctx.beginPath();
     if(type==="line"){
       ctx.moveTo(x1,y1);
@@ -146,6 +180,7 @@ function drawRandom(){
     }
     if(type==="rect"){
       ctx.strokeRect(x1,y1,(x2-x1)*p,(y2-y1)*p);
+      return; // strokeRectはすでに描画を完了させるので下のctx.stroke()は不要
     }
     if(type==="circle"){
       ctx.arc(x1,y1,Math.abs(x2-x1)*p,0,Math.PI*2);
@@ -154,28 +189,40 @@ function drawRandom(){
   });
 }
 
-/* タップ描画（Safari安定） */
+/* タップ描画（PC・スマホ両対応） */
 document.addEventListener("touchstart",e=>{
   if(e.target.closest("#ui")) return;
   drawRandom();
 },{passive:true});
 
 document.addEventListener("mousedown",e=>{
+  // スマホでの重複発火を防ぐ
+  if (e.button !== 0) return; // 左クリックのみ
   if(e.target.closest("#ui")) return;
   drawRandom();
 });
 
+// 背景色は個々のキャンバスではなく、背後のコンテナに適用（キャンバスの透明度を維持するため）
 bgColor.oninput=()=>{
-  canvases.forEach(c=>c.style.background=bgColor.value);
+  canvasContainer.style.background = bgColor.value;
 };
 
 /* PNG書き出し */
-export.onclick=()=>{
+btnExport.onclick=()=>{
   const out=document.createElement("canvas");
-  out.width=innerWidth;
-  out.height=innerHeight-ui.offsetHeight;
+  const w = canvases[0].width;
+  const h = canvases[0].height;
+  out.width = w;
+  out.height = h;
   const octx=out.getContext("2d");
+  
+  // 1. 背景色を塗りつぶす
+  octx.fillStyle = bgColor.value;
+  octx.fillRect(0, 0, w, h);
+  
+  // 2. レイヤーを順番に重ねる
   canvases.forEach(c=>octx.drawImage(c,0,0));
+  
   const a=document.createElement("a");
   a.href=out.toDataURL("image/png");
   a.download="art.png";
