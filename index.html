@@ -22,6 +22,7 @@ body {
 }
 canvas {
   position:absolute;
+  left:0;
   touch-action:manipulation;
 }
 fieldset { border:1px solid #555; }
@@ -83,7 +84,6 @@ resize(); addEventListener("resize",resize);
 
 function applyStyle(ctx){
   ctx.strokeStyle=color.value;
-  ctx.fillStyle=color.value;
   ctx.lineWidth=size.value;
   ctx.globalAlpha=alpha.value;
   ctx.lineCap="round";
@@ -99,14 +99,11 @@ function applyStyle(ctx){
   }
 }
 
-function drawAnimated(ctx,fn){
-  let t=0;
+function drawAnimated(ctx, draw){
+  let t=0.05; // ★重要
   function step(){
-    ctx.save();
-    applyStyle(ctx);
-    fn(t);
-    ctx.restore();
-    t+=0.04;
+    draw(t);
+    t+=0.05;
     if(t<=1) requestAnimationFrame(step);
   }
   step();
@@ -116,6 +113,8 @@ function drawOnce(){
   const ctx=ctxs[layer.value];
   const shapes=[...document.querySelectorAll(".shape:checked")].map(s=>s.value);
   if(!shapes.length) return;
+
+  applyStyle(ctx);
 
   const type=shapes[Math.floor(Math.random()*shapes.length)];
   const w=ctx.canvas.width, h=ctx.canvas.height;
